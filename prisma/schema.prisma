@@ -1,0 +1,618 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum UserRole {
+  VISITOR
+  BUSINESS_OWNER
+  MODERATOR
+  ADMIN
+}
+
+enum BusinessStatus {
+  DRAFT
+  ACTIVE
+  SUSPENDED
+  BANNED
+}
+
+enum VerificationStatus {
+  UNVERIFIED
+  PENDING
+  VERIFIED
+  REJECTED
+  SUSPENDED
+}
+
+enum VerificationMethod {
+  EMAIL
+  PHONE
+  WEBSITE
+  DOCUMENT
+  LOCATION
+  GST
+}
+
+enum LocationType {
+  COUNTRY
+  STATE
+  CITY
+  AREA
+}
+
+enum PaymentGateway {
+  RAZORPAY
+  STRIPE
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  REFUNDED
+  CANCELLED
+}
+
+enum PromotionStatus {
+  PENDING
+  ACTIVE
+  SUPERSEDED
+  REFUNDED
+  CANCELLED
+}
+
+enum LeaderboardScope {
+  GLOBAL
+  LOCATION
+  CATEGORY
+  LOCATION_CATEGORY
+}
+
+enum NotificationType {
+  RANK_UP
+  RANK_DOWN
+  OVERTAKEN
+  PROMOTION_ACTIVATED
+  PAYMENT_SUCCESS
+  PAYMENT_FAILED
+  VERIFICATION_APPROVED
+  VERIFICATION_REJECTED
+  SYSTEM
+}
+
+enum ReportReason {
+  FAKE_BUSINESS
+  MISLEADING_INFO
+  ILLEGAL_CONTENT
+  FRAUD
+  ABUSE
+  OTHER
+}
+
+enum ReportStatus {
+  OPEN
+  REVIEWING
+  RESOLVED
+  DISMISSED
+}
+
+enum SettingType {
+  STRING
+  NUMBER
+  BOOLEAN
+  JSON
+}
+
+// ============================================================
+// AUTH / USERS
+// ============================================================
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  emailVerified DateTime?
+  passwordHash  String?
+  name          String?
+  phone         String?
+  phoneVerified Boolean   @default(false)
+  image         String?
+  role          UserRole  @default(BUSINESS_OWNER)
+  isActive      Boolean   @default(true)
+  lastLoginAt   DateTime?
+  lastLoginIp   String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts      Account[]
+  sessions      Session[]
+  businesses    BusinessMember[]
+  notifications Notification[]
+  auditLogs     AuditLog[]
+  adminProfile  AdminUser?
+  reports       Report[]        @relation("ReporterUser")
+
+  @@index([email])
+  @@index([role])
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  ipAddress    String?
+  userAgent    String?
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model AdminUser {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  permissions  Json
+  isSuperAdmin Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ============================================================
+// LOCATIONS
+// ============================================================
+
+model Location {
+  id          String       @id @default(cuid())
+  type        LocationType
+  name        String
+  slug        String
+  parentId    String?
+  countryCode String?
+  latitude    Float?
+  longitude   Float?
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  parent       Location?     @relation("LocationTree", fields: [parentId], references: [id])
+  children     Location[]    @relation("LocationTree")
+  businesses   Business[]
+  leaderboards Leaderboard[]
+
+  @@unique([parentId, slug])
+  @@index([type])
+  @@index([parentId])
+  @@index([slug])
+}
+
+// ============================================================
+// CATEGORIES
+// ============================================================
+
+model Category {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String?
+  iconKey     String?
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  businesses   BusinessCategory[]
+  leaderboards Leaderboard[]
+
+  @@index([isActive, sortOrder])
+}
+
+// ============================================================
+// BUSINESSES
+// ============================================================
+
+model Business {
+  id                 String             @id @default(cuid())
+  slug               String             @unique
+  name               String
+  legalName          String?
+  description        String?            @db.Text
+  shortDescription   String?            @db.VarChar(280)
+
+  logoUrl            String?
+  coverUrl           String?
+  galleryUrls        String[]           @default([])
+
+  email              String?
+  phone              String?
+  whatsapp           String?
+  website            String?
+
+  addressLine1       String?
+  addressLine2       String?
+  postalCode         String?
+  locationId         String?
+  latitude           Float?
+  longitude          Float?
+
+  openingHours       Json?
+  socialLinks        Json?
+  services           Json?
+  products           Json?
+  offers             Json?
+
+  status             BusinessStatus     @default(DRAFT)
+  verificationStatus VerificationStatus @default(UNVERIFIED)
+  verifiedAt         DateTime?
+  isFeatured         Boolean            @default(false)
+
+  highestPromotionAmount   Decimal? @db.Decimal(14, 2)
+  highestPromotionCurrency String?  @default("INR")
+
+  createdById String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  location         Location?             @relation(fields: [locationId], references: [id])
+  members          BusinessMember[]
+  categories       BusinessCategory[]
+  leaderboardEntries LeaderboardEntry[]
+  promotions       Promotion[]
+  transactions     Transaction[]
+  views            BusinessView[]
+  clicks           BusinessClick[]
+  verificationReqs VerificationRequest[]
+  reports          Report[]
+  notifications    Notification[]
+
+  @@index([status, verificationStatus])
+  @@index([locationId])
+  @@index([slug])
+  @@index([highestPromotionAmount(sort: Desc)])
+  @@index([createdById])
+}
+
+model BusinessMember {
+  id         String   @id @default(cuid())
+  businessId String
+  userId     String
+  role       String   @default("OWNER")
+  createdAt  DateTime @default(now())
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, userId])
+  @@index([userId])
+}
+
+model BusinessCategory {
+  businessId String
+  categoryId String
+  isPrimary  Boolean @default(false)
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([businessId, categoryId])
+  @@index([categoryId])
+}
+
+// ============================================================
+// LEADERBOARDS
+// ============================================================
+
+model Leaderboard {
+  id           String           @id @default(cuid())
+  slug         String           @unique
+  title        String
+  scope        LeaderboardScope
+  locationId   String?
+  categoryId   String?
+  isActive     Boolean          @default(true)
+  lastRankedAt DateTime?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  location Location?          @relation(fields: [locationId], references: [id])
+  category Category?          @relation(fields: [categoryId], references: [id])
+  entries  LeaderboardEntry[]
+
+  @@unique([scope, locationId, categoryId])
+  @@index([locationId])
+  @@index([categoryId])
+}
+
+model LeaderboardEntry {
+  id                 String   @id @default(cuid())
+  leaderboardId      String
+  businessId         String
+
+  promotionAmount    Decimal  @db.Decimal(14, 2)
+  currency           String   @default("INR")
+  promotionTimestamp DateTime
+
+  currentRank        Int
+  previousRank       Int?
+  bestRank           Int
+  enteredRank        Int?
+
+  isActive           Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  leaderboard Leaderboard  @relation(fields: [leaderboardId], references: [id], onDelete: Cascade)
+  business    Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  rankHistory RankHistory[]
+
+  @@unique([leaderboardId, businessId])
+  @@index([leaderboardId, promotionAmount(sort: Desc), promotionTimestamp])
+  @@index([businessId])
+  @@index([leaderboardId, currentRank])
+}
+
+model RankHistory {
+  id              String   @id @default(cuid())
+  entryId         String
+  businessId      String
+  leaderboardId   String
+  fromRank        Int?
+  toRank          Int
+  promotionAmount Decimal  @db.Decimal(14, 2)
+  reason          String
+  createdAt       DateTime @default(now())
+
+  entry LeaderboardEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, createdAt])
+  @@index([leaderboardId, createdAt])
+}
+
+// ============================================================
+// PROMOTIONS + PAYMENTS
+// ============================================================
+
+model Promotion {
+  id           String          @id @default(cuid())
+  businessId   String
+  userId       String
+  amount       Decimal         @db.Decimal(14, 2)
+  currency     String          @default("INR")
+  platformFee  Decimal         @db.Decimal(14, 2)
+  gatewayFee   Decimal?        @db.Decimal(14, 2)
+  netToPlatform Decimal?       @db.Decimal(14, 2)
+
+  status       PromotionStatus @default(PENDING)
+  activatedAt  DateTime?
+  supersededAt DateTime?
+
+  targetLeaderboards Json
+  targetPosition     Int?
+
+  business    Business     @relation(fields: [businessId], references: [id])
+  transaction Transaction?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([businessId, status])
+  @@index([status, createdAt])
+}
+
+model Transaction {
+  id               String          @id @default(cuid())
+  transactionId    String          @unique
+  businessId       String
+  userId           String
+  promotionId      String?         @unique
+  amount           Decimal         @db.Decimal(14, 2)
+  currency         String          @default("INR")
+  gateway          PaymentGateway
+  gatewayOrderId   String?
+  gatewayPaymentId String?
+  gatewaySignature String?
+  paymentStatus    PaymentStatus   @default(PENDING)
+  promotionStatus  PromotionStatus @default(PENDING)
+  failureReason    String?
+  refundedAmount   Decimal?        @db.Decimal(14, 2)
+  metadata         Json?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  paidAt    DateTime?
+
+  business  Business       @relation(fields: [businessId], references: [id])
+  promotion Promotion?     @relation(fields: [promotionId], references: [id])
+  events    PaymentEvent[]
+
+  @@index([businessId, paymentStatus])
+  @@index([gatewayOrderId])
+  @@index([gatewayPaymentId])
+  @@index([paymentStatus, createdAt])
+}
+
+model PaymentEvent {
+  id             String         @id @default(cuid())
+  transactionId  String?
+  gateway        PaymentGateway
+  eventId        String         @unique
+  eventType      String
+  payload        Json
+  signatureValid Boolean        @default(false)
+  processed      Boolean        @default(false)
+  processedAt    DateTime?
+  error          String?
+  createdAt      DateTime       @default(now())
+
+  transaction Transaction? @relation(fields: [transactionId], references: [id])
+
+  @@index([gateway, eventType])
+  @@index([processed, createdAt])
+}
+
+// ============================================================
+// ANALYTICS
+// ============================================================
+
+model BusinessView {
+  id          String   @id @default(cuid())
+  businessId  String
+  visitorHash String?
+  userId      String?
+  source      String?
+  referrer    String?
+  ipCountry   String?
+  createdAt   DateTime @default(now())
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, createdAt])
+  @@index([visitorHash])
+}
+
+model BusinessClick {
+  id          String   @id @default(cuid())
+  businessId  String
+  clickType   String
+  visitorHash String?
+  source      String?
+  createdAt   DateTime @default(now())
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, clickType, createdAt])
+  @@index([businessId, createdAt])
+}
+
+// ============================================================
+// NOTIFICATIONS
+// ============================================================
+
+model Notification {
+  id         String           @id @default(cuid())
+  userId     String
+  businessId String?
+  type       NotificationType
+  title      String
+  body       String           @db.Text
+  data       Json?
+  readAt     DateTime?
+  emailedAt  DateTime?
+  createdAt  DateTime         @default(now())
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  business Business? @relation(fields: [businessId], references: [id])
+
+  @@index([userId, readAt])
+  @@index([userId, createdAt])
+}
+
+// ============================================================
+// VERIFICATION
+// ============================================================
+
+model VerificationRequest {
+  id           String             @id @default(cuid())
+  businessId   String
+  method       VerificationMethod
+  status       VerificationStatus @default(PENDING)
+  payload      Json
+  reviewedById String?
+  reviewedAt   DateTime?
+  notes        String?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, status])
+  @@index([status, createdAt])
+}
+
+// ============================================================
+// REPORTS
+// ============================================================
+
+model Report {
+  id             String       @id @default(cuid())
+  reporterUserId String?
+  businessId     String
+  reason         ReportReason
+  details        String?      @db.Text
+  status         ReportStatus @default(OPEN)
+  reviewedById   String?
+  reviewedAt     DateTime?
+  resolution     String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  reporter User?    @relation("ReporterUser", fields: [reporterUserId], references: [id])
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@index([businessId])
+}
+
+// ============================================================
+// AUDIT + SETTINGS
+// ============================================================
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  action     String
+  entityType String
+  entityId   String?
+  before     Json?
+  after      Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
+}
+
+model PlatformSetting {
+  id          String      @id @default(cuid())
+  key         String      @unique
+  value       Json
+  type        SettingType
+  description String?
+  updatedById String?
+  updatedAt   DateTime    @updatedAt
+  createdAt   DateTime    @default(now())
+}

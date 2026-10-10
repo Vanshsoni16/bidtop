@@ -1,0 +1,20 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-inter: 'Inter', system-ui, sans-serif;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  @apply bg-white text-navy-900 antialiased;
+}
+
+*:focus-visible {
+  @apply outline-none ring-2 ring-accent/50 ring-offset-2;
+}
